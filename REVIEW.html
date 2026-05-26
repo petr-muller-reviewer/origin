@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Review: openshift/origin#31196</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.6;
+    color: #1a1a1a;
+    background: #f9f9f9;
+    margin: 0;
+    padding: 2rem;
+  }
+  .container { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+  h2 { font-size: 1.1rem; border-bottom: 2px solid #e0e0e0; padding-bottom: 0.3rem; margin-top: 2rem; }
+  h3 { font-size: 0.95rem; margin-bottom: 0.3rem; }
+  a { color: #0969da; }
+  code, pre {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.875rem;
+    background: #f0f0f0;
+    border-radius: 4px;
+  }
+  code { padding: 0.1em 0.35em; }
+  pre {
+    padding: 0.75rem 1rem;
+    overflow-x: auto;
+    border-left: 3px solid #d0d0d0;
+    margin: 0.5rem 0;
+  }
+  .header-block {
+    background: #fff;
+    border: 1px solid #d0d7de;
+    border-radius: 8px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  .meta { color: #57606a; font-size: 0.875rem; margin-top: 0.5rem; }
+  .meta span { margin-right: 1.5rem; }
+  .verdict-block {
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.5rem;
+  }
+  .verdict-approve { background: #dafbe1; border: 1px solid #82e9a0; }
+  .verdict-label { font-weight: 700; font-size: 1.05rem; }
+  .verdict-approve .verdict-label { color: #1a7f37; }
+  .findings-section { margin-bottom: 1.5rem; }
+  .finding {
+    background: #fff;
+    border: 1px solid #d0d7de;
+    border-radius: 6px;
+    padding: 0.9rem 1.1rem;
+    margin-bottom: 0.75rem;
+  }
+  .severity {
+    display: inline-block;
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 0.15em 0.55em;
+    border-radius: 12px;
+    text-transform: uppercase;
+    margin-right: 0.5rem;
+    vertical-align: middle;
+  }
+  .sev-nit { background: #e8f4fd; color: #0a6da8; }
+  .finding-title { font-weight: 600; vertical-align: middle; }
+  .where { font-size: 0.8rem; color: #57606a; margin: 0.3rem 0 0.5rem; }
+  .concern { margin: 0.5rem 0; font-size: 0.92rem; }
+  ul { padding-left: 1.4rem; }
+  li { margin-bottom: 0.3rem; }
+  .checked-list li::marker { color: #1a7f37; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <div class="header-block">
+    <h1><a href="https://github.com/openshift/origin/pull/31196">openshift/origin#31196</a></h1>
+    <div style="font-size:1rem; font-weight:600; margin-top:0.25rem;">
+      OCPBUGS-86225: fix PDB AlwaysAllow test failure on IPv6-primary dualstack clusters
+    </div>
+    <div class="meta">
+      <span><strong>Author:</strong> tthvo</span>
+      <span><strong>Base:</strong> main</span>
+      <span><strong>Head SHA:</strong> <code>9596377d687c</code></span>
+      <span><strong>Reviewed:</strong> 2026-05-26T16:18:26Z</span>
+    </div>
+  </div>
+
+  <!-- Verdict -->
+  <div class="verdict-block verdict-approve">
+    <div class="verdict-label">✓ Approve</div>
+    <p style="margin:0.5rem 0 0;">
+      Minimal, correct fix for a real test flake on IPv6-primary dualstack clusters. The root cause
+      analysis is accurate, both the source YAML and generated bindata.go are updated in sync, and
+      no production code is touched. The only noteworthy item is a cosmetic inconsistency in nginx
+      <code>ipv6only</code> usage relative to a nearby config — not a correctness issue.
+    </p>
+  </div>
+
+  <!-- What this PR does -->
+  <h2>What this PR does</h2>
+  <ul>
+    <li>Fixes the PDB <em>AlwaysAllow</em> e2e test, which deploys nginx pods and waits for them to become Ready via an HTTP readiness probe on port 8080.</li>
+    <li>On IPv6-primary dualstack clusters, the kubelet probes the pod's IPv6 address; the previous nginx config only bound to <code>0.0.0.0:8080</code> (IPv4), causing connection refused and pods never becoming Ready.</li>
+    <li>Adds <code>listen [::]:8080;</code> so nginx accepts connections on both IPv4 and IPv6 — standard dual-stack nginx pattern.</li>
+    <li>Updates both the authoritative YAML (<code>nginx-with-delayed-ready-deployment.yaml</code>) and its generated embedding (<code>bindata.go</code>) consistently.</li>
+  </ul>
+
+  <!-- Findings -->
+  <h2>Findings</h2>
+
+  <div class="findings-section">
+    <h3>Nits</h3>
+    <div class="finding">
+      <span class="severity sev-nit">nit</span>
+      <span class="finding-title">Inconsistent <code>ipv6only</code> usage compared to nearby nginx config</span>
+      <div class="where">
+        <code>test/extended/testdata/poddisruptionbudgets/nginx-with-delayed-ready-deployment.yaml:70</code>
+        &nbsp;/&nbsp;
+        <code>test/extended/testdata/bindata.go:51172-51173</code>
+      </div>
+      <div class="concern">
+        A sibling nginx config in the same <code>bindata.go</code> (lines 51715–51716) uses the pattern
+        <code>listen [::]:8443 ipv6only=on;</code> alongside <code>listen 8443;</code>.
+        This PR omits <code>ipv6only=on</code> for port 8080. Without it, the IPv6 socket's dual-stack
+        behavior depends on the kernel's <code>net.ipv6.bindv6only</code> setting; on the Linux default
+        (<code>0</code>) the IPv6 socket could be dual-stack, potentially conflicting with the explicit
+        <code>listen 8080;</code> directive. Nginx handles this gracefully in practice and the fix is
+        correct either way, but the inconsistency is worth noting.
+      </div>
+      <pre>
+# This PR (port 8080):
+listen 8080;
+listen [::]:8080;
+
+# Existing config (port 8443, bindata.go:51715):
+listen 8443;
+listen [::]:8443 ipv6only=on;</pre>
+    </div>
+  </div>
+
+  <!-- Things checked -->
+  <h2>Things I checked and was fine with</h2>
+  <ul class="checked-list">
+    <li>Root cause is accurate: <code>listen 8080;</code> binds IPv4 only; kubelet on IPv6-primary clusters probes via the pod's IPv6 address; connection refused prevents pods reaching Ready state.</li>
+    <li>The dual-directive pattern (<code>listen 8080; listen [::]:8080;</code>) is the standard recommended nginx dual-stack configuration and works correctly.</li>
+    <li>Source YAML and generated <code>bindata.go</code> are updated in sync — no regeneration gap.</li>
+    <li>Zero production code is touched; risk is confined to test fixtures.</li>
+    <li>IPv4-only clusters are unaffected: IPv4 probes still resolve to <code>listen 8080;</code>.</li>
+    <li>No new test for IPv6-primary topology is needed — this fix unblocks the existing test; adding topology-gated infrastructure is out of scope for a flake fix.</li>
+  </ul>
+
+  <!-- Open questions -->
+  <h2>Open questions for the author</h2>
+  <ul>
+    <li>Should <code>ipv6only=on</code> be added for consistency with the port 8443 config? (<em>Not blocking</em> — the fix is correct without it, but aligning the style would avoid reader confusion.)</li>
+  </ul>
+
+</div>
+</body>
+</html>
