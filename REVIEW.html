@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Review: openshift/origin#31252</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+    max-width: 820px;
+    margin: 2rem auto;
+    padding: 0 1rem;
+    color: #1a1a1a;
+    background: #fff;
+  }
+  h1 { font-size: 1.4rem; border-bottom: 2px solid #0969da; padding-bottom: 0.4rem; }
+  h2 { font-size: 1.15rem; margin-top: 2rem; border-bottom: 1px solid #d0d7de; padding-bottom: 0.3rem; }
+  h3 { font-size: 1rem; margin-top: 1.2rem; }
+  code, pre { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; font-size: 0.9em; }
+  code { background: #f0f3f6; padding: 0.15em 0.35em; border-radius: 3px; }
+  pre { background: #f6f8fa; padding: 0.8rem 1rem; border-radius: 6px; overflow-x: auto; line-height: 1.45; }
+  .meta { background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; padding: 0.8rem 1rem; margin-bottom: 1.5rem; font-size: 0.92em; }
+  .meta dt { font-weight: 600; display: inline; }
+  .meta dd { display: inline; margin: 0 1.2rem 0 0; }
+  .verdict { background: #dafbe1; border-left: 4px solid #1a7f37; padding: 0.6rem 1rem; border-radius: 4px; margin: 1rem 0; }
+  .severity { display: inline-block; font-size: 0.78em; font-weight: 700; text-transform: uppercase; padding: 0.15em 0.5em; border-radius: 3px; margin-right: 0.4em; vertical-align: middle; }
+  .sev-nit { background: #ddf4ff; color: #0550ae; }
+  ul { padding-left: 1.4rem; }
+  li { margin-bottom: 0.3rem; }
+</style>
+</head>
+<body>
+
+<h1>Review: openshift/origin#31252</h1>
+
+<div class="meta">
+  <dl>
+    <dt>PR:</dt><dd><a href="https://github.com/openshift/origin/pull/31252">openshift/origin#31252</a></dd>
+    <dt>Title:</dt><dd>TRT-2617: Fix CPU metrics monitor node role lookup</dd>
+    <dt>Author:</dt><dd>sosiouxme (Luke Meyer)</dd>
+    <dt>Base:</dt><dd>main</dd>
+    <dt>Head SHA:</dt><dd><code>f9c36b9d157822caf5563baa75d915addba5da8c</code></dd>
+    <dt>Reviewed:</dt><dd>2026-06-03T13:00:13Z</dd>
+  </dl>
+</div>
+
+<h2>Verdict</h2>
+<div class="verdict">
+  <strong>Approve.</strong>
+</div>
+<p>
+  The bug fix is correct and minimal: <code>buildNodeInfoMap</code> was only keying by IP address, so when Prometheus <code>instance</code> labels were hostnames the node-role column was always empty. Adding a <code>node.Name</code> key fixes it. The refactor to extract <code>collectCPUMetricsFromPrometheusClient</code> is well-scoped and the functional test is properly gated for manual use only.
+</p>
+
+<h2>What this PR does</h2>
+<ul>
+  <li>Fixes <code>buildNodeInfoMap</code> to also key by <code>node.Name</code> (not just IP and IP:port), so that Prometheus instance labels matching hostnames resolve to the correct node info and populate the node-role column.</li>
+  <li>Deduplicates <code>nodeInfo</code> struct construction &mdash; a single value is built per node and reused across all map entries.</li>
+  <li>Extracts <code>collectCPUMetricsFromPrometheusClient</code> from <code>collectCPUMetricsFromPrometheus</code>, separating the client-setup concerns from the metric-collection logic.</li>
+  <li>Adds <code>functional_test.go</code> &mdash; an env-var-gated test for driving the collector against real Prometheus/Kubernetes infrastructure during debugging.</li>
+</ul>
+
+<h2>Findings</h2>
+
+<h3><span class="severity sev-nit">nit</span> Concrete type instead of interface for kubeClient</h3>
+<p><code>pkg/monitortests/testframework/cpumetriccollector/monitortest.go:109</code></p>
+<p>The new method accepts <code>*kubernetes.Clientset</code> rather than <code>kubernetes.Interface</code>. Using the interface would allow unit testing with a fake client in the future. Low priority given the debugging-oriented nature of the test.</p>
+<pre>func (w *cpuMetricCollector) collectCPUMetricsFromPrometheusClient(
+    ctx context.Context,
+    prometheusClient prometheusv1.API,
+    kubeClient *kubernetes.Clientset,  // could be kubernetes.Interface
+    startTime time.Time,
+) ([]monitorapi.Interval, error) {</pre>
+
+<h3><span class="severity sev-nit">nit</span> No direct unit test for buildNodeInfoMap fix</h3>
+<p><code>pkg/monitortests/testframework/cpumetriccollector/monitortest.go:329-354</code></p>
+<p>The actual bug fix (adding <code>nodeInfoMap[node.Name] = info</code>) is exercised only through the env-var-gated functional test. A small table-driven unit test with a synthetic <code>NodeList</code> would lock down the name-based lookup independently of external infrastructure.</p>
+
+<h3><span class="severity sev-nit">nit</span> Comment reformatting adds diff noise</h3>
+<p><code>pkg/monitortests/testframework/cpumetriccollector/monitortest.go:157, 190</code></p>
+<p>The "Fallback to instance..." comments were reflowed but the text is semantically unchanged. Cosmetic only.</p>
+
+<h2>Things I checked and was fine with</h2>
+<ul>
+  <li><code>buildNodeInfoMap</code> correctly maps by node name, IP, and IP:port &mdash; fixes the empty node-role column.</li>
+  <li><code>nodeInfo</code> struct deduplication: single value reused across all map entries for a node.</li>
+  <li><code>collectCPUMetricsFromPrometheus</code> correctly delegates to the new extracted method after setup (namespace check, client creation, Thanos check).</li>
+  <li>Logger field name updated to match the new function name.</li>
+  <li>Functional test properly gates on env vars with <code>t.Skip</code> &mdash; will not run in CI.</li>
+  <li><code>InsecureSkipVerify: true</code> acceptable for a test targeting internal CI Prometheus instances.</li>
+  <li>No changes to the Prometheus query, interval creation logic, or data export paths.</li>
+</ul>
+
+<h2>Open questions for the author</h2>
+<ul>
+  <li>Would you consider adding a unit test for <code>buildNodeInfoMap</code> to cover the name-based lookup directly? Even a 10-line table test would lock down the fix independently of external infrastructure.</li>
+</ul>
+
+</body>
+</html>
