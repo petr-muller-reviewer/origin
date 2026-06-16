@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Review: openshift/origin#31291</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+    color: #24292f;
+    max-width: 860px;
+    margin: 2rem auto;
+    padding: 0 1rem;
+    background: #fff;
+  }
+  h1 { font-size: 1.4rem; border-bottom: 2px solid #d0d7de; padding-bottom: 0.4rem; }
+  h2 { font-size: 1.15rem; margin-top: 2rem; border-bottom: 1px solid #d8dee4; padding-bottom: 0.3rem; }
+  h3 { font-size: 1rem; margin-top: 1.4rem; }
+  code, pre {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.88em;
+  }
+  code { background: #f6f8fa; padding: 0.15em 0.35em; border-radius: 4px; }
+  pre {
+    background: #f6f8fa;
+    padding: 0.8rem 1rem;
+    border-radius: 6px;
+    overflow-x: auto;
+    line-height: 1.45;
+  }
+  .meta { background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; padding: 0.8rem 1.2rem; margin-bottom: 1.5rem; }
+  .meta dt { font-weight: 600; display: inline; }
+  .meta dt::after { content: ": "; }
+  .meta dd { display: inline; margin: 0; }
+  .meta dd::after { content: ""; display: block; margin-bottom: 0.15rem; }
+  .verdict { padding: 0.6rem 1rem; border-radius: 6px; margin-bottom: 1.5rem; }
+  .verdict.approve { background: #dafbe1; border-left: 4px solid #2da44e; }
+  .severity { display: inline-block; font-size: 0.78em; font-weight: 600; padding: 0.1em 0.5em; border-radius: 10px; text-transform: uppercase; margin-right: 0.4em; }
+  .sev-nit { background: #ddf4ff; color: #0969da; }
+  .sev-question { background: #fff8c5; color: #9a6700; }
+  ul { padding-left: 1.3rem; }
+  li { margin-bottom: 0.3rem; }
+  a { color: #0969da; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<h1>Review: openshift/origin#31291</h1>
+
+<div class="meta">
+  <dl>
+    <dt>PR</dt><dd><a href="https://github.com/openshift/origin/pull/31291">openshift/origin#31291</a></dd>
+    <dt>Title</dt><dd>OPNET-603: Fail haproxy test when all kubeapi servers are down simultaneously</dd>
+    <dt>Head SHA</dt><dd><code>3006971db32f070313e45d2d9a86315ee8300509</code></dd>
+    <dt>Base</dt><dd><code>main</code></dd>
+    <dt>Reviewed at</dt><dd>2026-06-16T15:49:09Z</dd>
+  </dl>
+</div>
+
+<div class="verdict approve">
+  <strong>Verdict: Approve.</strong>
+  Clean, well-tested addition. The sweep-line algorithm is correct, edge cases are covered by unit tests, and prior review feedback from dgoodwin has been addressed. CI confirms 22/22 passes. No blocking issues found.
+</div>
+
+<h2>What this PR does</h2>
+<ul>
+  <li>Adds <code>findFullAPIOutageWindows()</code>: a sweep-line algorithm that takes existing <code>OnPremHaproxyDetectsDown</code> intervals and finds time windows where a single haproxy instance saw &ge;3 kube-apiserver backends down concurrently (full API outage for HA clusters).</li>
+  <li>Adds <code>evaluateFullAPIOutages()</code>: produces a new JUnit test that <strong>hard-fails</strong> (not flaky) on any post-install full outage. The first outage per haproxy instance is tolerated as the expected install-time state.</li>
+  <li>Refactors <code>EvaluateTestsFromConstructedIntervals</code> to build a result slice and append the new test alongside the existing (still flaky) per-backend reachability test.</li>
+  <li>Cleans up commented-out code and improves the existing test's failure message per prior review feedback.</li>
+  <li>Adds comprehensive unit tests covering the sweep semantics and JUnit evaluation logic.</li>
+</ul>
+
+<h2>Findings</h2>
+
+<p>No blocking or should-fix issues found.</p>
+
+<h3><span class="severity sev-nit">nit</span> Pre-existing <code>___</code> key packing</h3>
+<p><code>pkg/monitortests/network/onpremhaproxy/monitortest.go:261</code></p>
+<pre>pairKey := interval.Locator.Keys[monitorapi.LocatorOnPremKubeapiUnreachableFromHaproxyKey]
+parts := strings.SplitN(pairKey, "___", 2)</pre>
+<p>Packing two locator keys into one string with a <code>___</code> separator is fragile. This is pre-existing from <code>ConstructComputedIntervals</code> (line 113) and not introduced by this PR. dgoodwin raised this in review; mkowalski explained it is a limitation of the locator struct type (<code>map[LocatorKey]string</code> &mdash; no nested maps). Not actionable in this PR but worth tracking as tech debt.</p>
+
+<h3><span class="severity sev-question">question</span> Install-tolerance assumption</h3>
+<p><code>pkg/monitortests/network/onpremhaproxy/monitortest.go:341-343</code></p>
+<pre>for _, window := range outagesPerNode[node][1:] {</pre>
+<p>The <code>[1:]</code> skip assumes the first outage window for every haproxy node is always the install phase. If a haproxy pod restarts mid-run and that restart causes a brief full outage that happens to be the first window for a "new" node entry, it would be silently tolerated. This seems acceptable given the monitoring setup (the node name stays the same across pod restarts, so its install-phase window would still be first), but worth confirming with the author.</p>
+
+<h2>Things I checked and was fine with</h2>
+<ul>
+  <li><strong>Sweep algorithm correctness</strong>: tie-breaking sorts recovery events (<code>delta: -1</code>) before down events (<code>delta: 1</code>) at equal timestamps, correctly preventing artificial overlap at second-granularity boundaries.</li>
+  <li><strong>Window merge logic</strong>: <code>!window.from.After(merged[len(merged)-1].to)</code> correctly handles both touching and overlapping windows.</li>
+  <li><strong><code>[1:]</code> slice safety</strong>: <code>findFullAPIOutageWindows</code> only adds a node to the result map when <code>len(merged) &gt; 0</code>, so the slice passed to <code>[1:]</code> is guaranteed non-empty.</li>
+  <li><strong>Intentionally non-flaky</strong>: the new test returns only <code>[failure]</code> (not <code>[failure, success]</code>), making it a hard fail. This is the correct design choice for a full API outage.</li>
+  <li><strong>Existing behavior preserved</strong>: the per-backend flaky test continues to emit the <code>[failure, success]</code> pair exactly as before.</li>
+  <li><strong>Unit test coverage</strong>: edge cases for no intervals, single/two/three backends, cross-node isolation, two separate outages, same-second boundary, backend flapping within outage (merged), per-instance tracking, install tolerance, post-install failure, partial post-install outage.</li>
+  <li><strong>CI signal</strong>: TRT bot reports 22/22 passes for the new test.</li>
+  <li><strong>Prior review feedback addressed</strong>: commented-out lines removed, test name updated to "should not encounter" (dgoodwin suggestion), failure message improved.</li>
+</ul>
+
+<h2>Open questions for the author</h2>
+<ul>
+  <li>Is there a scenario where a haproxy node appears in the monitoring data without the install-phase outage being its first window? For example, a haproxy pod restart or node replacement mid-test where the node name changes and the "new" node's first observed window is actually a real outage, not install.</li>
+</ul>
+
+</body>
+</html>
