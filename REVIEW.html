@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Review: openshift/origin#31292</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; line-height: 1.6; color: #1f2328; background: #fff; padding: 2rem 1rem; }
+  .container { max-width: 52rem; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+  h2 { font-size: 1.25rem; margin-top: 2rem; margin-bottom: 0.75rem; border-bottom: 1px solid #d1d9e0; padding-bottom: 0.3rem; }
+  h3 { font-size: 1rem; margin-top: 1.25rem; margin-bottom: 0.25rem; }
+  p, li { margin-bottom: 0.4rem; }
+  ul { padding-left: 1.5rem; }
+  a { color: #0969da; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; font-size: 0.875em; background: #f6f8fa; padding: 0.15em 0.35em; border-radius: 4px; }
+  pre { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; font-size: 0.85em; background: #f6f8fa; padding: 1rem; border-radius: 6px; overflow-x: auto; margin: 0.5rem 0 1rem; line-height: 1.45; }
+  .header-block { background: #f6f8fa; border: 1px solid #d1d9e0; border-radius: 6px; padding: 1rem 1.25rem; margin-bottom: 1.5rem; }
+  .header-block p { margin-bottom: 0.2rem; font-size: 0.9rem; }
+  .verdict { background: #dafbe1; border: 1px solid #aceebb; border-radius: 6px; padding: 0.75rem 1.25rem; margin-bottom: 1.5rem; }
+  .verdict .label { font-weight: 700; text-transform: uppercase; color: #1a7f37; }
+  .severity { display: inline-block; font-size: 0.75rem; font-weight: 600; padding: 0.1em 0.5em; border-radius: 3px; text-transform: uppercase; vertical-align: middle; margin-right: 0.3rem; }
+  .sev-nit { background: #ddf4ff; color: #0969da; }
+  .sev-question { background: #fff8c5; color: #7a5e00; }
+  .finding { margin-bottom: 1.25rem; padding-left: 0.75rem; border-left: 3px solid #d1d9e0; }
+  .finding-nit { border-left-color: #54aeff; }
+  .checked-list li { color: #57606a; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<div class="header-block">
+  <h1>OPNET-602: Fail haproxy monitor test when log collection fails</h1>
+  <p><strong>PR:</strong> <a href="https://github.com/openshift/origin/pull/31292">openshift/origin#31292</a></p>
+  <p><strong>Author:</strong> @mkowalski</p>
+  <p><strong>Base:</strong> main</p>
+  <p><strong>Head SHA:</strong> <code>b4a2d0f549e3838b0d517d6a0e34160c7eb60579</code></p>
+  <p><strong>Reviewed:</strong> 2026-06-16T15:49:07Z</p>
+</div>
+
+<div class="verdict">
+  <p><span class="label">Approve</span></p>
+  <p>Solid, focused change that closes a real gap in test reliability. The platform detection logic is correct, the framework integration follows established patterns, and the test suite covers the important edge cases. No blocking issues found.</p>
+</div>
+
+<h2>What this PR does</h2>
+<ul>
+  <li>Adds platform detection in <code>PrepareCollection</code> by reading the Infrastructure CR, so the haproxy monitor test only runs where haproxy static pods are actually deployed (BareMetal, OpenStack, vSphere with API VIP and OpenShift-managed LB).</li>
+  <li>On unsupported platforms, returns <code>NotSupportedError</code> from every phase, which the framework converts into JUnit skips &mdash; replacing today's vacuous passes.</li>
+  <li>On supported platforms, <code>scanAllOperatorPods</code> now fails hard when zero haproxy pods are found, catching silent rot of namespace/label assumptions.</li>
+  <li>Handles MicroShift (no Infrastructure CR) gracefully via <code>IsNotFound</code> check, and checks both the deprecated singular <code>APIServerInternalIP</code> and the current plural <code>APIServerInternalIPs</code> field.</li>
+  <li>Adds comprehensive unit tests for the platform detection logic covering all three supported platforms and their edge cases.</li>
+</ul>
+
+<h2>Findings</h2>
+
+<p>No blocking or should-fix issues. Three nits:</p>
+
+<div class="finding finding-nit">
+  <h3><span class="severity sev-nit">nit</span> Zero-container gap in scanAllOperatorPods</h3>
+  <p><code>pkg/monitortests/network/onpremhaproxy/monitortest.go:109-127</code></p>
+  <p>The new check guards against zero pods, but if pods exist and none contains a <code>haproxy</code> container (filtered at line 117), the function returns nil. The label selector makes this unlikely in practice, but counting scanned containers and failing on zero would fully close the gap.</p>
+  <pre>if len(infraPods) == 0 {
+    return fmt.Errorf("found no haproxy pods to scan: ...")
+}
+// ... later:
+if container.Name != "haproxy" {
+    continue
+}</pre>
+</div>
+
+<div class="finding finding-nit">
+  <h3><span class="severity sev-nit">nit</span> Test coverage for LB type on OpenStack and vSphere</h3>
+  <p><code>pkg/monitortests/network/onpremhaproxy/platform_test.go:81-92</code></p>
+  <p>The user-managed loadbalancer test case only covers BareMetal. The production code applies the same LB-type gating to all three platforms. Adding equivalent cases for OpenStack and vSphere would prevent a regression if someone modifies the switch arms independently.</p>
+</div>
+
+<div class="finding finding-nit">
+  <h3><span class="severity sev-nit">nit</span> Switch case repetition in platform detection</h3>
+  <p><code>pkg/monitortests/network/onpremhaproxy/platform.go:26-49</code></p>
+  <p>The three platform branches are near-identical. Go's type system makes abstraction difficult here (different concrete status types), so the repetition is reasonable. Worth noting that if a fourth platform ever gains haproxy support, this switch needs updating &mdash; but the test file makes the supported set explicit, so missing it would be caught.</p>
+</div>
+
+<h2>Things I checked and was fine with</h2>
+<ul class="checked-list">
+  <li><code>NotSupportedError</code> integration follows the established pattern used by <code>disruptionnewapiserver</code>, <code>disruptionserviceloadbalancer</code>, and others.</li>
+  <li>Framework handles <code>NotSupportedError</code> uniformly at every phase boundary (PrepareCollection, StartCollection, CollectData, ConstructComputedIntervals, EvaluateTests, WriteContentToStorage), converting to JUnit skips.</li>
+  <li><code>RetryWithExponentialBackoff</code> used for the Infrastructure API call; MicroShift handled via <code>IsNotFound</code>.</li>
+  <li>Both deprecated <code>APIServerInternalIP</code> (singular) and current <code>APIServerInternalIPs</code> (plural) fields are checked for backward compatibility.</li>
+  <li><code>WriteContentToStorage</code> returning <code>w.notSupportedReason</code> directly is correct: nil when supported, <code>NotSupportedError</code> when not.</li>
+  <li>No race condition on the <code>notSupportedReason</code> field: the framework calls phases sequentially per monitor test.</li>
+  <li>No variable shadowing issues in <code>PrepareCollection</code>.</li>
+</ul>
+
+<h2>Open questions for the author</h2>
+<ul>
+  <li>Would it be worth also counting scanned haproxy containers (not just pods) and failing if zero were scanned? This would guard against a hypothetical container rename breaking collection silently.</li>
+  <li>The pre-existing <code>// move to prepare?</code> comment on <code>StartCollection</code> (line 71) &mdash; now that <code>PrepareCollection</code> does real work, is moving <code>kubernetes.NewForConfig</code> there a natural follow-up?</li>
+</ul>
+
+</div>
+</body>
+</html>
