@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Review: openshift/origin#31343</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #24292e; max-width: 860px; margin: 40px auto; padding: 0 20px; }
+  h1 { font-size: 1.4em; border-bottom: 2px solid #e1e4e8; padding-bottom: 8px; }
+  h2 { font-size: 1.1em; color: #444; margin-top: 2em; border-bottom: 1px solid #e1e4e8; padding-bottom: 4px; }
+  h3 { font-size: 1em; margin-bottom: 4px; }
+  code, pre { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 0.88em; background: #f6f8fa; border-radius: 4px; }
+  code { padding: 2px 5px; }
+  pre { padding: 12px 16px; overflow-x: auto; border: 1px solid #e1e4e8; }
+  .meta { background: #f6f8fa; border: 1px solid #e1e4e8; border-radius: 6px; padding: 12px 16px; margin-bottom: 24px; font-size: 0.9em; }
+  .meta a { color: #0366d6; text-decoration: none; }
+  .meta a:hover { text-decoration: underline; }
+  .verdict-box { border-left: 4px solid #28a745; padding: 10px 16px; background: #f0fff4; border-radius: 0 4px 4px 0; margin-bottom: 20px; }
+  .verdict-approve { border-color: #28a745; background: #f0fff4; }
+  .verdict-label { font-weight: bold; text-transform: uppercase; font-size: 0.85em; letter-spacing: 0.05em; color: #28a745; }
+  ul { padding-left: 1.4em; }
+  li { margin-bottom: 4px; }
+  .checked li { color: #555; }
+  .no-findings { color: #6a737d; font-style: italic; }
+  .file-ref { font-size: 0.85em; color: #6a737d; }
+</style>
+</head>
+<body>
+
+<div class="meta">
+  <strong>PR:</strong> <a href="https://github.com/openshift/origin/pull/31343">openshift/origin#31343</a><br>
+  <strong>Title:</strong> NO-ISSUE: monitor/haproxy: treat all-apiservers-down test as flake<br>
+  <strong>Author:</strong> mkowalski<br>
+  <strong>Head SHA:</strong> <code>dd88e867eb640eddb10cf9ccb14f0c82161857bf</code><br>
+  <strong>Base:</strong> main<br>
+  <strong>Reviewed at:</strong> 2026-06-26T10:30:17Z
+</div>
+
+<h1>Review: openshift/origin#31343</h1>
+
+<div class="verdict-box verdict-approve">
+  <div class="verdict-label">Approve</div>
+  <p style="margin: 6px 0 0 0;">
+    Minimal, correct change that follows the established flake-fallback pattern already used by the
+    sibling test in the same file. No correctness issues found. Tests are properly updated to assert
+    the new two-result structure. Safe to merge as-is.
+  </p>
+</div>
+
+<h2>What this PR does</h2>
+<ul>
+  <li>Makes <code>evaluateFullAPIOutages</code> return both a failure and a success JUnit result when it detects a full API outage, causing CI to classify the result as a flake instead of a hard failure.</li>
+  <li>The success case (no outage detected) continues to return a single passing JUnit result — no change there.</li>
+  <li>Enables flake rate tracking in Sippy without blocking payload acceptance while detection sensitivity is being tuned.</li>
+  <li>Updates <code>TestEvaluateFullAPIOutages</code> to assert the new two-result structure for failure cases (<code>Len==2</code>, <code>[0]</code> fails, <code>[1]</code> passes) and keep the single-result assertion for passing cases.</li>
+  <li>Follows the identical pattern already used by the sibling <code>evaluateKubeApiServerAvailability</code> function at <code>monitortest.go:280</code>.</li>
+</ul>
+
+<h2>Findings</h2>
+<p class="no-findings">No blocking, should-fix, nit, or question findings. All angles checked clean.</p>
+
+<h2>Things I checked and was fine with</h2>
+<ul class="checked">
+  <li><strong>Go composite literal syntax:</strong> <code>{Name: testName}</code> inside <code>[]*junitapi.JUnitTestCase{failure, {Name: testName}}</code> is valid Go — the spec permits eliding <code>&amp;T{}</code> to <code>{}</code> for pointer elements in a composite literal. The zero-value <code>FailureOutput</code> correctly marks it as a passing result.</li>
+  <li><strong>Caller compatibility:</strong> The single call site at <code>monitortest.go:283</code> uses <code>ret = append(ret, evaluateFullAPIOutages(leaseIntervals)...)</code> which is agnostic to slice length — returning 2 instead of 1 is transparent.</li>
+  <li><strong>Test correctness:</strong> The old top-level <code>require.Len(t, junits, 1)</code> (which would have broken for failure cases) is removed; length assertions are now correctly placed inside each branch. The <code>SystemOut</code> assertions still check <code>junits[0]</code> (the failure) as intended.</li>
+  <li><strong>Pattern consistency:</strong> Matches the flake pattern in the sibling function (<code>monitortest.go:245,280</code>). Only stylistic difference is inlining the success struct literal rather than assigning it to a named <code>success</code> variable — not a defect.</li>
+  <li><strong>Success-path unchanged:</strong> The early-return at line 429 (<code>return []*junitapi.JUnitTestCase{{Name: testName}}</code>) is untouched and still returns a single passing result when no outage is detected.</li>
+  <li><strong>Comment quality:</strong> Both the production code and test comments accurately describe the intent and the temporary nature of the flake marker.</li>
+</ul>
+
+<h2>Open questions for the author</h2>
+<p class="no-findings">None.</p>
+
+</body>
+</html>
