@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Review: openshift/origin#31450</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+    color: #1a1a1a;
+    max-width: 860px;
+    margin: 2rem auto;
+    padding: 0 1.5rem;
+    background: #fdfdfd;
+  }
+  code, pre {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.9em;
+  }
+  pre {
+    background: #f4f4f4;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 0.8rem 1rem;
+    overflow-x: auto;
+  }
+  code.inline {
+    background: #f0f0f0;
+    padding: 0.1em 0.35em;
+    border-radius: 3px;
+  }
+  header {
+    border-bottom: 2px solid #333;
+    padding-bottom: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  header table { border-collapse: collapse; }
+  header td { padding: 0.15rem 0.6rem 0.15rem 0; vertical-align: top; }
+  header td.k { color: #666; white-space: nowrap; }
+  h1 { font-size: 1.4rem; margin-bottom: 0.2rem; }
+  h2 { font-size: 1.15rem; border-bottom: 1px solid #ddd; padding-bottom: 0.3rem; margin-top: 2rem; }
+  h3 { font-size: 1rem; margin-bottom: 0.3rem; }
+  .verdict {
+    font-weight: bold;
+    padding: 0.6rem 1rem;
+    border-radius: 4px;
+    display: inline-block;
+    margin-bottom: 0.5rem;
+  }
+  .verdict.approve { background: #dcf5dc; color: #1a5c1a; border: 1px solid #a8dba8; }
+  .finding {
+    border: 1px solid #e0e0e0;
+    border-left: 4px solid #999;
+    border-radius: 4px;
+    padding: 0.8rem 1rem;
+    margin-bottom: 1rem;
+  }
+  .finding.nit { border-left-color: #d9a441; }
+  .badge {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 0.1em 0.5em;
+    border-radius: 3px;
+    margin-right: 0.5em;
+  }
+  .badge.nit { background: #fbe7c6; color: #7a5200; }
+  .loc { color: #555; }
+  ul { padding-left: 1.4rem; }
+  li { margin-bottom: 0.3rem; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Review: openshift/origin#31450</h1>
+  <table>
+    <tr><td class="k">Title</td><td>OCPBUGS-100183: Always tear down upgrade tests after setup failures</td></tr>
+    <tr><td class="k">Base</td><td><code class="inline">main</code></td></tr>
+    <tr><td class="k">Head SHA</td><td><code class="inline">5460879a7d42c1c85e2e8f873228a7836d1c6cfc</code></td></tr>
+    <tr><td class="k">Reviewed at</td><td>2026-07-29T23:10:13Z</td></tr>
+    <tr><td class="k">Link</td><td><a href="https://github.com/openshift/origin/pull/31450">github.com/openshift/origin/pull/31450</a></td></tr>
+  </table>
+</header>
+
+<section>
+  <span class="verdict approve">VERDICT: APPROVE</span>
+  <p>
+    This is a narrowly scoped, correct fix for a real resource leak observed in CI (the linked aggregated
+    GCP upgrade run where a Gateway API precheck failure left a Gateway deployment behind). The recover/re-panic
+    pattern is textbook-correct, is exercised by a solid table-driven unit test covering all panic
+    combinations, and the companion guard in the Gateway API test is a necessary fix for a nil-pointer panic
+    the main change would otherwise introduce &mdash; not scope creep. Build, vet, and tests all pass.
+  </p>
+</section>
+
+<section>
+  <h2>What this PR does</h2>
+  <ul>
+    <li>Extracts <code class="inline">runUpgradeTest</code> in <code class="inline">disruption.go</code>, registering <code class="inline">Teardown</code> via a deferred recover before <code class="inline">Setup</code> runs, instead of deferring it only after <code class="inline">Setup</code> returns successfully.</li>
+    <li>Uses a recover/re-panic pattern so a panic inside <code class="inline">Teardown</code> never masks the original setup/test panic.</li>
+    <li>Adds a guard in <code class="inline">GatewayAPIUpgradeTest.Teardown</code> for the case where <code class="inline">Setup</code> panics before <code class="inline">t.oc</code>/<code class="inline">t.gatewayName</code> are initialized &mdash; otherwise <code class="inline">Teardown</code> would nil-pointer-panic now that it can run in that scenario.</li>
+    <li>Adds <code class="inline">disruption_test.go</code> with table-driven coverage of setup/test/teardown panic combinations.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Findings</h2>
+
+  <h3>Blocking</h3>
+  <p><em>None.</em></p>
+
+  <h3>Should fix</h3>
+  <p><em>None.</em></p>
+
+  <h3>Nits</h3>
+  <div class="finding nit">
+    <span class="badge nit">Nit</span>
+    <strong>Discarded teardown panic is not logged</strong>
+    <div class="loc"><code class="inline">test/extended/util/disruption/disruption.go:189-193</code></div>
+    <p>When a primary (setup/test) panic already occurred, a subsequent panic from <code class="inline">Teardown</code> is silently discarded via <code class="inline">_ = recover()</code>. This is intentional &mdash; it avoids masking the real failure &mdash; but it means a genuine teardown-time resource leak in that specific path goes completely unreported. Consider an <code class="inline">e2e.Logf</code> call before discarding, purely for diagnosability.</p>
+    <pre>// A teardown panic must not replace the setup or test failure.
+defer func() {
+    _ = recover()
+    panic(primaryPanic)
+}()
+test.Teardown(ctx, f)</pre>
+  </div>
+
+  <h3>Questions</h3>
+  <ul>
+    <li>Would a debug-level log line before discarding a teardown panic (when a primary panic already exists) be worth adding, so a teardown-side resource leak isn't completely silent in CI artifacts?</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Things I checked and was fine with</h2>
+  <ul>
+    <li>Build (<code class="inline">go build</code>), <code class="inline">go vet</code>, and <code class="inline">go test ./test/extended/util/disruption/...</code> all pass against this diff.</li>
+    <li><code class="inline">gofmt -l</code> clean on all three changed/added files.</li>
+    <li>Traced all 6 panic-combination cases in <code class="inline">disruption_test.go</code> by hand against <code class="inline">runUpgradeTest</code> &mdash; call order and surfaced panic value match expectations in each case.</li>
+    <li><code class="inline">ready()</code> semantics unchanged: still guarded by <code class="inline">sync.Once</code>, still invoked via <code class="inline">chaosMonkeyAdapter.Test</code>'s own <code class="inline">defer ready()</code> regardless of whether <code class="inline">runUpgradeTest</code> panics before reaching its internal <code class="inline">ready()</code> call &mdash; <code class="inline">sem.Ready()</code> still signals exactly once on every path.</li>
+    <li><code class="inline">GatewayAPIUpgradeTest.Teardown</code> guard is scoped correctly: <code class="inline">t.oc</code> and <code class="inline">t.gatewayName</code> are set contiguously early in <code class="inline">Setup</code>, and the only panic point before that is the <code class="inline">o.Expect(t.precheckErr)</code> check at the top of <code class="inline">Setup</code>. All other delete calls in <code class="inline">Teardown</code> already tolerate missing resources via <code class="inline">IsNotFound</code>/<code class="inline">--ignore-not-found</code>, so the new guard covers exactly the previously-unhandled gap.</li>
+    <li>Confirmed the Gateway API guard is a necessary companion change, not scope creep: without it, the <code class="inline">disruption.go</code> fix would introduce a nil-pointer panic in <code class="inline">GatewayAPIUpgradeTest.Teardown</code> for the exact failure mode (setup panics before resource init) it's meant to fix.</li>
+  </ul>
+</section>
+
+</body>
+</html>
