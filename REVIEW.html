@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Review of openshift/origin#31457</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; line-height: 1.6; color: #1a1a1a; max-width: 900px; margin: 2rem auto; padding: 0 1.5rem; background: #fdfdfd; }
+  code, pre { font-family: "SF Mono", Consolas, Menlo, monospace; background: #f2f2f2; padding: 0.15em 0.4em; border-radius: 3px; font-size: 0.92em; }
+  pre { padding: 0.8em 1em; overflow-x: auto; }
+  h1 { font-size: 1.5rem; border-bottom: 2px solid #ddd; padding-bottom: 0.4rem; }
+  h2 { font-size: 1.2rem; margin-top: 2rem; border-bottom: 1px solid #eee; padding-bottom: 0.3rem; }
+  h3 { font-size: 1.02rem; margin-bottom: 0.3rem; }
+  .meta { background: #f7f7f9; border: 1px solid #e2e2e6; border-radius: 6px; padding: 1rem 1.2rem; font-size: 0.92rem; }
+  .meta div { margin: 0.15rem 0; }
+  .verdict { font-size: 1.1rem; font-weight: 600; padding: 0.8rem 1.2rem; border-radius: 6px; }
+  .verdict.approve { background: #e6f4ea; color: #1e7a34; border: 1px solid #b7e1c3; }
+  .finding { border: 1px solid #e2e2e6; border-radius: 6px; padding: 0.9rem 1.2rem; margin: 0.9rem 0; }
+  .finding.question { border-left: 4px solid #6b8fce; }
+  .sev { display: inline-block; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.15em 0.6em; border-radius: 3px; margin-right: 0.5em; }
+  .sev.question { background: #e8eefc; color: #35538f; }
+  .loc { color: #666; font-size: 0.88rem; }
+  ul { padding-left: 1.4rem; }
+  a { color: #2660c9; }
+</style>
+</head>
+<body>
+
+<h1>Review of openshift/origin#31457</h1>
+<div class="meta">
+  <div><strong>PR:</strong> <a href="https://github.com/openshift/origin/pull/31457">openshift/origin#31457</a></div>
+  <div><strong>Title:</strong> OCPBUGS-100385: MonitorTest: measure the union of ClusterOperator wait intervals</div>
+  <div><strong>Head SHA:</strong> <code>4a51d5701d41c40cea791465f1e072fbf361304d</code></div>
+  <div><strong>Base branch:</strong> main</div>
+  <div><strong>Reviewed at:</strong> 2026-08-03T10:17:24Z</div>
+</div>
+
+<h2>Verdict</h2>
+<div class="verdict approve">Approve</div>
+<p>The fix is correctly reasoned and well tested. It replaces a span-based duration calculation (which double-counted gaps between disjoint CVO-reporting episodes) with a proper interval-merge/union calculation, matching the PR's stated intent and backed by solid RCA evidence of the bug it caused in production. I traced the merge algorithm and updated test expectations by hand and found them consistent; I could not execute <code>go build</code>/<code>go test</code> in this sandbox (no <code>go</code> binary available), so CI should be the final correctness gate.</p>
+
+<h2>What this PR does</h2>
+<ul>
+  <li>Replaces <code>fromAndTo</code> (which computed <code>latest_end - earliest_start</code> across all intervals naming an operator in a CVO Progressing message) with <code>summarizeWaitingIntervals</code>, which sorts intervals and merges overlapping/adjacent ones into distinct episodes.</li>
+  <li>The "waiting" duration is now the sum of merged episode durations, not the full span between first and last observation — fixing overcounting when CVO reports on the same operator across multiple disjoint episodes (e.g. due to CVO restarts).</li>
+  <li>Failure and flake diagnostic messages are enriched with total duration, episode count, longest episode, full observation span, and each merged episode's time range.</li>
+  <li>Scope is tightly contained to one file pair: <code>operators.go</code> and <code>operators_test.go</code> in <code>legacycvomonitortests</code>.</li>
+  <li>Existing <code>Test_updateCOWaiting</code> expectations were updated to reflect the corrected semantics (not just an API rename), and a new table-driven <code>Test_summarizeWaitingIntervals</code> covers merge, adjacency, invalid intervals, and edge cases.</li>
+</ul>
+
+<h2>Findings</h2>
+
+<div class="finding question">
+  <h3><span class="sev question">Question</span>Verbosity of diagnostic string in both flake and hard-failure paths</h3>
+  <div class="loc"><code>pkg/monitortests/clusterversionoperator/legacycvomonitortests/operators.go:643-647</code>, <code>:688-690</code></div>
+  <pre>summary := summarizeWaitingIntervals(intervals)
+if summary.total &lt; 3*time.Minute {
+	return fmt.Sprintf("%s completing its update within less than three minutes: %s", co, summary)
+}</pre>
+  <p><code>waitingIntervalSummary.String()</code> always renders total, episode count, longest, full span, and every episode's time range. This is used both in the "under 3 minutes" (flake) message and the "waited over 3 minutes" (failure) message. Likely intentional per the PR description's emphasis on RCA diagnostics, but worth confirming this verbosity is desired in both paths and not just the failure path.</p>
+</div>
+
+<h2>Things I checked and was fine with</h2>
+<ul>
+  <li>Merge algorithm correctness by hand-tracing: sort by <code>(From, To)</code> ascending, then merge when <code>interval.From</code> is not strictly after the last episode's <code>To</code> — correctly handles overlap, adjacency, and full containment (a nested interval doesn't shrink <code>To</code> since only <code>max</code> is applied).</li>
+  <li>No aliasing bug: <code>sorted := append(monitorapi.Intervals(nil), intervals...)</code> copies before sorting; <code>last := &amp;summary.episodes[...]</code> mutates only the freshly built <code>episodes</code> slice, not the caller's input.</li>
+  <li>Invalid-interval filtering (<code>From.IsZero()</code> or <code>To.Before(From)</code>) happens inside the merge loop after sorting — doesn't affect sort correctness and correctly excludes garbage.</li>
+  <li>Zero-duration "point" intervals (<code>From == To</code>) are treated as valid zero-length episodes, matching the "separated point does not fill gap" test's intent.</li>
+  <li><code>fromAndTo</code> is fully removed; a repo-wide grep for it returns nothing — no dangling references.</li>
+  <li>A repo-wide grep for <code>COWaiting</code>/<code>summarizeWaitingIntervals</code>/<code>waitingIntervalSummary</code> outside this package returns nothing — the change is fully self-contained.</li>
+  <li>Hand-verified the updated <code>Test_updateCOWaiting</code> expectations, e.g. "incremental one" changes from the old <code>next + 2*time.Minute</code> (which spanned a 3-hour gap) to the new <code>5 * time.Minute</code> (3min + 2min, correctly excluding the gap) — this is exactly the bug being fixed.</li>
+  <li><code>Test_summarizeWaitingIntervals</code> table-driven cases (disjoint point vs. real episode, overlap+adjacency with out-of-order input, multiple episodes without double-counting, invalid-interval filtering, all-empty/all-invalid) hand-traced against the implementation — all consistent.</li>
+  <li>Could not run <code>go vet</code>/<code>go test</code> directly in this sandbox (no <code>go</code> binary present) — verification here is by code inspection, not an executed test run.</li>
+</ul>
+
+<h2>Open questions for the author</h2>
+<ul>
+  <li>Can you confirm CI is green for <code>go vet ./pkg/monitortests/clusterversionoperator/legacycvomonitortests</code> and <code>go test ./pkg/monitortests/clusterversionoperator/legacycvomonitortests</code>? I verified the logic by inspection only, not execution.</li>
+  <li>Is the fully verbose <code>String()</code> output (including every episode's range) intended for the sub-3-minute flake message too, or should that path use a shorter summary?</li>
+</ul>
+
+</body>
+</html>
