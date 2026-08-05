@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Review: openshift/origin#31472</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; line-height: 1.6; color: #1a1a1a; max-width: 860px; margin: 2rem auto; padding: 0 1.5rem; background: #fdfdfd; }
+  code, pre { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+  header { border-bottom: 2px solid #ddd; padding-bottom: 1rem; margin-bottom: 1.5rem; }
+  header dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 0.5rem 0; }
+  header dt { font-weight: 600; color: #555; }
+  header dd { margin: 0; }
+  h1 { font-size: 1.4rem; margin: 0 0 0.5rem; }
+  h2 { font-size: 1.15rem; border-bottom: 1px solid #eee; padding-bottom: 0.3rem; margin-top: 2rem; }
+  .verdict { padding: 0.75rem 1rem; border-radius: 6px; background: #e6f4ea; border: 1px solid #b7e0c2; margin: 1rem 0; }
+  .verdict .label { font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: #1e7a34; }
+  .finding { border: 1px solid #e0e0e0; border-radius: 6px; padding: 0.9rem 1.1rem; margin: 0.9rem 0; }
+  .finding h3 { margin: 0 0 0.4rem; font-size: 1rem; }
+  .sev { display: inline-block; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; padding: 0.15rem 0.5rem; border-radius: 4px; margin-right: 0.5rem; vertical-align: middle; }
+  .sev-blocking { background: #fdeaea; color: #a3221f; }
+  .sev-should-fix { background: #fff4e0; color: #8a5a00; }
+  .sev-nit { background: #eef0ff; color: #3949ab; }
+  .sev-question { background: #f0f0f0; color: #555; }
+  .loc { color: #666; font-size: 0.85rem; }
+  pre { background: #f6f6f6; border: 1px solid #e5e5e5; border-radius: 4px; padding: 0.75rem 1rem; overflow-x: auto; font-size: 0.85rem; }
+  ul { padding-left: 1.3rem; }
+  a { color: #2563eb; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Review: openshift/origin#31472</h1>
+  <dl>
+    <dt>Title</dt><dd>OCPBUGS-104561: test: exclude NTO debug pods from best-effort QoS invariant</dd>
+    <dt>Base</dt><dd>main</dd>
+    <dt>Head SHA</dt><dd><code>9b3f3268e87eb1b7bf12a1f383c2dd89f5ae9b73</code></dd>
+    <dt>Reviewed at</dt><dd>2026-08-05T22:07:26Z</dd>
+    <dt>Link</dt><dd><a href="https://github.com/openshift/origin/pull/31472">github.com/openshift/origin/pull/31472</a></dd>
+  </dl>
+</header>
+
+<div class="verdict">
+  <span class="label">Verdict: Approve</span>
+  <p>Small, well-scoped, test-only flake fix. The refactor is behavior-preserving for existing exclusions and correctly adds the new NTO namespace behind the existing <code>isEphemeralDebugPod</code> predicate, so it cannot mask a genuine control-plane best-effort regression. New unit test coverage is a clear improvement over the prior zero-coverage state.</p>
+</div>
+
+<h2>What this PR does</h2>
+<ul>
+  <li>Fixes a flake in the control-plane best-effort-QoS invariant test (<code>test/extended/operators/qos.go</code>) caused by transient <code>oc debug</code> pods created by NTO e2e tests in <code>openshift-cluster-node-tuning-operator</code>.</li>
+  <li>Refactors the two pre-existing inline exclusions (MCO debug namespace, <code>openshift-debug-*</code> prefix) plus the new NTO namespace into a single <code>isKnownEphemeralDebugPod</code> helper.</li>
+  <li>Adds <code>test/extended/operators/qos_test.go</code>, the first unit test for this pod-classification logic.</li>
+</ul>
+
+<h2>Findings</h2>
+
+<div class="finding">
+  <h3><span class="sev sev-nit">Nit</span>Loss of per-namespace rationale comments at call site</h3>
+  <div class="loc"><code>test/extended/operators/qos.go:75-79</code></div>
+  <p>The prior version had detailed inline comments per namespace explaining why each exclusion exists (including the OCPBUGS-99916 reference for <code>openshift-debug-*</code>). These were collapsed into one generic comment. Not wrong, just slightly less self-documenting for a future maintainer reading only the code.</p>
+  <pre>// Exclude only recognized transient oc debug pods in the namespaces
+// used by test helpers. They are best-effort QoS by design rather
+// than control-plane workloads.
+if isKnownEphemeralDebugPod(&amp;pod) {
+    continue
+}</pre>
+</div>
+
+<div class="finding">
+  <h3><span class="sev sev-question">Question</span>Coverage of label/annotation-based detection in the new namespace</h3>
+  <div class="loc"><code>test/extended/operators/qos_test.go:25-32</code></div>
+  <p>The new NTO test case only exercises the legacy <code>-debug-</code> name-substring path of <code>isEphemeralDebugPod</code>, not the modern managed-by-label or source-resource-annotation paths, for this namespace specifically. <code>isEphemeralDebugPod</code> itself is unchanged and already covered elsewhere, so this is optional polish rather than a real gap.</p>
+  <pre>pod: v1.Pod{ObjectMeta: metav1.ObjectMeta{
+    Namespace: nodeTuningOperatorNamespace,
+    Name:      "worker-a-debug-abcde",
+}},
+want: true,</pre>
+</div>
+
+<h2>Things I checked and was fine with</h2>
+<ul>
+  <li>Traced <code>isKnownEphemeralDebugPod</code> against all three namespace branches (<code>node.DebugNamespace</code> = <code>openshift-machine-config-operator</code>, new <code>nodeTuningOperatorNamespace</code>, <code>openshift-debug-*</code> prefix) — behavior-preserving for the two existing cases, additive for the new one.</li>
+  <li>Confirmed the exclusion still requires <code>isEphemeralDebugPod</code> (label/annotation/name-substring), so ordinary NTO pods (e.g. <code>tuned-*</code>) are not exempted — matches the PR body's claim.</li>
+  <li>Verified all 6 new table-test cases against the implementation logic; expected results match.</li>
+  <li>Test-only change (2 files under <code>test/extended/operators/</code>), no production code touched — low blast radius.</li>
+</ul>
+
+<h2>Open questions for the author</h2>
+<ul>
+  <li>Would it be worth restoring a one-line comment referencing OCPBUGS-99916/OCPBUGS-104561 at the call site for future debugging context, now that the rationale lives only in git history?</li>
+</ul>
+
+</body>
+</html>
