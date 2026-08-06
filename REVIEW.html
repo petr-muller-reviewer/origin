@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Review: openshift/origin#31481</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; line-height: 1.6; color: #1a1a1a; max-width: 880px; margin: 2rem auto; padding: 0 1.5rem; background: #fdfdfd; }
+  code, pre { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+  pre { background: #f4f4f4; border: 1px solid #e0e0e0; border-radius: 6px; padding: 0.75rem 1rem; overflow-x: auto; font-size: 0.88rem; }
+  code.inline { background: #f0f0f0; padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.9em; }
+  header.meta { background: #f0f4f8; border: 1px solid #d7e0ea; border-radius: 8px; padding: 1rem 1.25rem; margin-bottom: 1.5rem; }
+  header.meta table { border-collapse: collapse; }
+  header.meta td { padding: 0.15rem 0.6rem 0.15rem 0; vertical-align: top; }
+  header.meta td.k { color: #555; font-weight: 600; white-space: nowrap; }
+  h1 { font-size: 1.4rem; }
+  h2 { font-size: 1.15rem; border-bottom: 2px solid #eee; padding-bottom: 0.3rem; margin-top: 2rem; }
+  .verdict { font-size: 1.05rem; font-weight: 600; padding: 0.6rem 1rem; border-radius: 6px; display: inline-block; }
+  .verdict.approve { background: #e6f6ea; color: #16692e; border: 1px solid #b7e4c0; }
+  .finding { border: 1px solid #e5e5e5; border-radius: 8px; padding: 0.9rem 1.1rem; margin: 0.9rem 0; }
+  .finding h3 { margin: 0 0 0.4rem 0; font-size: 1rem; }
+  .tag { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; padding: 0.15rem 0.5rem; border-radius: 4px; margin-right: 0.5rem; }
+  .tag.nit { background: #eef0f5; color: #444; }
+  .loc { color: #666; font-size: 0.85rem; }
+  ul.compact li { margin: 0.25rem 0; }
+</style>
+</head>
+<body>
+
+<header class="meta">
+  <h1>Review: openshift/origin#31481</h1>
+  <table>
+    <tr><td class="k">Title</td><td>Bug OCPBUGS-104497: Fix [sig-ci] prow job name OS version test for 4.23 rhcos9</td></tr>
+    <tr><td class="k">Head SHA</td><td><code class="inline">b67e0bd4959188b4106952186d53df063d6595a4</code></td></tr>
+    <tr><td class="k">Base</td><td><code class="inline">main</code></td></tr>
+    <tr><td class="k">Reviewed at</td><td>2026-08-06T12:56:02Z</td></tr>
+    <tr><td class="k">PR state</td><td><strong>MERGED</strong></td></tr>
+    <tr><td class="k">Link</td><td><a href="https://github.com/openshift/origin/pull/31481">github.com/openshift/origin/pull/31481</a></td></tr>
+  </table>
+</header>
+
+<div class="finding" style="border-color:#cfe0ef; background:#f5f9fd;">
+  <h3>Refresh log</h3>
+  <p>From <code class="inline">4b6c84261115c29cb5a43e553f8f8ab01c208f6e</code> to <code class="inline">b67e0bd4959188b4106952186d53df063d6595a4</code>: PR force-pushed (single commit). Merged the separate "upgrade" and "default" <code class="inline">else if</code> branches into one unified <code class="inline">else</code> branch that uses <code class="inline">getInstallVersion()</code> for all non-explicit-marker, non-<code class="inline">-runc</code> jobs, instead of parsing <code class="inline">Status.Desired.Version</code> separately for the default case. Resolves the "Duplicate ClusterVersion parsing" nit from the prior review. Net diff vs. prior reviewed version: 4 insertions, 9 deletions. No new PR comments or reviews since prior review.</p>
+  <p>No further code change since: CI/process activity only — petr-muller commented "/verified by /payload-job" (22:46:34Z), openshift-ci-robot acknowledged the verify command (22:46:45Z), and redhat-chai-bot requested re-tests via "/test e2e-gcp-csi" and "/test e2e-metal-ipi-ovn-ipv6" (22:49:38Z). No review feedback, no findings affected.</p>
+  <p>No further code change since: petr-muller ran "/override-sticky ci/prow/e2e-gcp-csi ci/prow/e2e-metal-ipi-ovn-ipv6" (23:04:12Z on 2026-08-05), acknowledged by openshift-ci[bot] (23:04:19Z), overriding the two previously-requested CI contexts. No review feedback, no findings affected.</p>
+  <p><strong>PR merged.</strong> redhat-chai-bot reported all tests passed (2026-08-06T00:20:26Z); openshift-ci-robot posted the Jira pre-merge-verification check for OCPBUGS-104497, confirming associated PRs merged and pre-merge verified, moving the Jira issue to MODIFIED (2026-08-06T00:20:20Z). No code change, no review feedback since prior refresh, no findings affected.</p>
+</div>
+
+<h2>Verdict</h2>
+<p><span class="verdict approve">Approve</span></p>
+<p>The fix is minimal, correctly scoped, and matches the described root cause — a permafail on 4.23 nightly jobs caused by the OS-version test defaulting to <code class="inline">rhel-10</code> for jobs with no explicit stream marker in the name. The follow-up commit is a net simplification.</p>
+
+<h2>What this PR does</h2>
+<ul class="compact">
+  <li>Fixes <code class="inline">validateStandaloneNodeOS</code> in <code class="inline">test/extended/ci/job_names.go</code> so jobs with no explicit <code class="inline">rhcos9</code>/<code class="inline">rhcos10</code>/<code class="inline">-runc</code> marker correctly expect <code class="inline">rhel-9</code> on 4.x clusters instead of unconditionally defaulting to <code class="inline">rhel-10</code>.</li>
+  <li>Fixes the specific failure: 4.23 nightlies run RHCOS9 but the test expected RHCOS10 by default, since 4.23 has no explicit stream marker in job names.</li>
+  <li><strong>Since previous review:</strong> the author force-pushed a follow-up commit that removes the separate <code class="inline">strings.Contains(jobName, "upgrade")</code> branch and merges it with the default-case branch into a single unified <code class="inline">else</code>, using <code class="inline">getInstallVersion()</code> uniformly instead of parsing <code class="inline">Status.Desired.Version</code> separately for the non-upgrade default case.</li>
+  <li>Single file, net 4 insertions / 9 deletions vs. the previously reviewed version — a simplification, not new scope.</li>
+</ul>
+
+<h2>Findings</h2>
+
+<div class="finding" style="opacity:0.7;">
+  <h3><span class="tag nit" style="background:#dff3e2;color:#16692e;">Resolved</span>Duplicate ClusterVersion.Status.Desired.Version parsing</h3>
+  <p class="loc">was <code class="inline">test/extended/ci/job_names.go:283-289</code> (prior review), now unified into <code class="inline">test/extended/ci/job_names.go:283-289</code> (current)</p>
+  <pre>} else {
+    // A cluster installed with OCP 4.x uses rhel-9, whether upgraded to 5.x or not.
+    // For upgrade jobs (4→5), the desired version is 5.x but the OS was installed
+    // as rhel-9 and is preserved after upgrade.
+    installVersion := getInstallVersion(clusterVersion)
+    if installVersion.Major() &lt; 5 {
+        targetStream = "rhel-9"
+    }
+}</pre>
+  <p>Originally flagged: the <code class="inline">else</code> branch parsed <code class="inline">clusterVersion.Status.Desired.Version</code> independently from the later "OSImageStream not found" fallback path, which parses the same field again. Resolution: the follow-up commit removed the separate <code class="inline">desiredVersion</code> parse entirely; the unified branch now reuses <code class="inline">getInstallVersion(clusterVersion)</code>, the same helper already used by the old <code class="inline">upgrade</code>-specific branch. No behavior regression expected — for non-upgraded clusters, <code class="inline">getInstallVersion()</code> and <code class="inline">Status.Desired.Version</code> report the same major version.</p>
+</div>
+
+<div class="finding">
+  <h3><span class="tag nit">Nit</span>Stale comment on default assumption</h3>
+  <p class="loc"><code class="inline">test/extended/ci/job_names.go:276</code></p>
+  <pre>// If no explicit stream assume rhel-10
+targetStream := "rhel-10"</pre>
+  <p>This comment is no longer fully accurate now that 4.x clusters without explicit markers get overridden to <code class="inline">rhel-9</code> a few lines later. Purely cosmetic.</p>
+</div>
+
+<h2>Things I checked and was fine with</h2>
+<ul class="compact">
+  <li>The unified <code class="inline">else</code> branch only fires for non-explicit-marker, non-<code class="inline">-runc</code> jobs (upgrade and non-upgrade alike) — correctly scoped, doesn't affect the <code class="inline">rhcos9</code>/<code class="inline">rhcos10</code>/<code class="inline">-runc</code> branches.</li>
+  <li><code class="inline">getInstallVersion()</code> requires at least one completed <code class="inline">UpdateHistory</code> entry (fails otherwise) — true for any real cluster including a freshly-installed one, so dropping the <code class="inline">Status.Desired.Version</code> path introduces no new failure mode.</li>
+  <li>Error handling matches existing file conventions (<code class="inline">o.Expect(err).NotTo(o.HaveOccurred(), ...)</code>).</li>
+  <li>No unit tests added — consistent with the rest of the file; this Ginkgo e2e package has no unit tests since it depends on a live cluster. PR description confirms <code class="inline">go vet</code>/<code class="inline">go test</code> compile cleanly.</li>
+  <li>No new PR comments, inline comments, or reviews since prior <code class="inline">reviewed_at</code>.</li>
+  <li>Net change vs. prior reviewed version is a simplification (4 insertions, 9 deletions), low regression risk.</li>
+</ul>
+
+<h2>Open questions for the author</h2>
+<ul class="compact">
+  <li>None — the fix is minimal, correctly scoped, matches the described root cause, and the follow-up commit is a net simplification over the previously-reviewed version.</li>
+</ul>
+
+</body>
+</html>
