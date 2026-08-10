@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Review of openshift/origin#31487</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; line-height: 1.6; color: #1a1a1a; max-width: 900px; margin: 2rem auto; padding: 0 1.5rem; background: #fafafa; }
+  code, pre { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+  header { border-bottom: 2px solid #ddd; padding-bottom: 1rem; margin-bottom: 1.5rem; }
+  header dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 0.5rem 0; }
+  header dt { font-weight: 600; color: #555; }
+  header dd { margin: 0; }
+  h1 { font-size: 1.4rem; margin: 0 0 0.25rem; }
+  h2 { font-size: 1.15rem; border-bottom: 1px solid #e0e0e0; padding-bottom: 0.3rem; margin-top: 2rem; }
+  .verdict { font-size: 1.05rem; padding: 0.75rem 1rem; border-radius: 6px; background: #fff6e0; border: 1px solid #e8d9a0; }
+  .verdict strong { text-transform: uppercase; }
+  .finding { border: 1px solid #ddd; border-radius: 6px; padding: 0.75rem 1rem; margin: 0.75rem 0; background: #fff; }
+  .finding h3 { margin: 0 0 0.4rem; font-size: 1rem; }
+  .sev { display: inline-block; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; padding: 0.1rem 0.5rem; border-radius: 4px; margin-right: 0.5rem; vertical-align: middle; }
+  .sev-blocking { background: #ffdada; color: #a10000; }
+  .sev-should-fix { background: #ffe9c2; color: #8a5300; }
+  .sev-nit { background: #e2e2e2; color: #444; }
+  .sev-question { background: #d9e8ff; color: #0b4a9c; }
+  .loc { color: #666; font-size: 0.85rem; }
+  pre { background: #f4f4f4; border: 1px solid #e0e0e0; border-radius: 4px; padding: 0.6rem 0.8rem; overflow-x: auto; font-size: 0.85rem; }
+  ul { padding-left: 1.3rem; }
+  a { color: #0b5fc7; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Review of openshift/origin#31487</h1>
+  <dl>
+    <dt>Title</dt><dd>NO-ISSUE: Consider centos-10 stream for OKD clusters</dd>
+    <dt>Head SHA</dt><dd><code>f32f8cd93f4cd628342bb47fc6d6f4f6685aafbf</code></dd>
+    <dt>Base</dt><dd>main</dd>
+    <dt>Reviewed at</dt><dd>2026-08-07T14:51:11Z</dd>
+    <dt>Link</dt><dd><a href="https://github.com/openshift/origin/pull/31487">github.com/openshift/origin/pull/31487</a></dd>
+  </dl>
+</header>
+
+<div class="verdict">
+  <strong>Needs discussion</strong> &mdash; The core logic (OKD detection, stream targeting) is correct and well-scoped, but the reorder of the <code>ClusterVersion</code> fetch to run before the MicroShift check risks breaking MicroShift runs of this test, based on how MicroShift detection and <code>ClusterVersion</code> usage are handled elsewhere in this repo. Worth confirming with the author before merge.
+</div>
+
+<h2>What this PR does</h2>
+<ul>
+  <li>Adds OKD detection to the "should match os version" Ginkgo test in <code>test/extended/ci/job_names.go</code>, based on <code>ClusterVersion.Status.Desired.Version</code> containing <code>okd-scos</code>.</li>
+  <li>Fails the test if job name and cluster OKD-ness disagree on the <code>okd-scos</code> substring.</li>
+  <li>Threads <code>isOKD</code> and the already-fetched <code>clusterVersion</code> into <code>validateStandaloneNodeOS</code>.</li>
+  <li>OKD clusters now target the <code>centos-10</code> OS image stream instead of falling through the RHCOS 9/10 heuristics used for OCP.</li>
+</ul>
+
+<h2>Findings</h2>
+
+<div class="finding">
+  <h3><span class="sev sev-should-fix">should-fix</span>ClusterVersion fetch moved ahead of isMicroShift check</h3>
+  <p class="loc"><code>test/extended/ci/job_names.go:184-194</code></p>
+  <p>The new <code>ClusterVersions().Get(..., "version", ...)</code> call (with <code>o.Expect(err).NotTo(o.HaveOccurred())</code>) now runs unconditionally, before the <code>isMicroShift</code>/<code>isHyperShift</code> branch. Previously this fetch only happened inside <code>validateStandaloneNodeOS</code> &mdash; i.e. only on the non-MicroShift/non-HyperShift path. Existing code in this repo treats "MicroShift" and "safe to fetch ClusterVersion" as mutually exclusive: <code>test/extended/apiserver/api_requests.go:44-51</code> explicitly gates its <code>ClusterVersion</code> fetch behind <code>!isMicroShift</code>, and <code>IsMicroShiftCluster</code>'s doc comment (<code>test/extended/util/framework.go:2315-2325</code>) explains MicroShift is detected via a <code>microshift-version</code> configmap rather than <code>ClusterVersion</code>, implying MicroShift doesn't reliably serve that resource. If so, this test will now hard-fail on MicroShift instead of reaching <code>validateMicroshiftNodeOS</code>'s skip/short-circuit path as before.</p>
+  <pre>clusterVersion, err := oc.AdminConfigClient().ConfigV1().ClusterVersions().Get(context.Background(), "version", metav1.GetOptions{})
+o.Expect(err).NotTo(o.HaveOccurred(), "Error getting ClusterVersion version singleton")
+
+isOKD := strings.Contains(clusterVersion.Status.Desired.Version, "okd-scos")
+if isOKD &amp;&amp; !strings.Contains(originalJobName, "okd-scos") {
+    e2e.Failf("cluster is OKD but job name %q does not contain 'okd-scos'", originalJobName)
+}
+if !isOKD &amp;&amp; strings.Contains(originalJobName, "okd-scos") {
+    e2e.Failf("cluster is not OKD but job name %q contains 'okd-scos'", originalJobName)
+}
+
+isMicroShift, err := exutil.IsMicroShiftCluster(oc.AdminKubeClient())</pre>
+</div>
+
+<div class="finding">
+  <h3><span class="sev sev-question">question</span>does OKD always target centos-10 regardless of install version?</h3>
+  <p class="loc"><code>test/extended/ci/job_names.go:277-291</code> (<code>validateStandaloneNodeOS</code>)</p>
+  <p>For <code>isOKD == true</code>, the function hardcodes <code>targetStream = "centos-10"</code> unconditionally. Non-OKD clusters get a version-based fallback (4.x installs preserved as rhel-9 even after upgrade to 5.x) via the <code>default:</code> branch, but OKD skips that fallback entirely. If OKD ever had a pre-centos-10 stream, an OKD cluster on that older stream and not yet upgraded would fail this check. Not necessarily wrong, but unexplained in the PR description or code.</p>
+  <pre>switch {
+case isOKD:
+    targetStream = "centos-10"
+case strings.Contains(jobName, "rhcos10"):
+    targetStream = "rhel-10"
+case strings.Contains(jobName, "rhcos9"):
+    targetStream = "rhel-9"
+case strings.Contains(jobName, "-runc"):
+    targetStream = "rhel-9"
+default:</pre>
+</div>
+
+<div class="finding">
+  <h3><span class="sev sev-nit">nit</span>two Failf branches could be one XOR check</h3>
+  <p class="loc"><code>test/extended/ci/job_names.go:187-192</code></p>
+  <p>The two <code>if isOKD &amp;&amp; !... / if !isOKD &amp;&amp; ...</code> blocks implement an XOR and could collapse to <code>if isOKD != strings.Contains(...)</code>. Current form is arguably clearer given the distinct failure messages, so this is stylistic only.</p>
+  <pre>if isOKD &amp;&amp; !strings.Contains(originalJobName, "okd-scos") {
+    e2e.Failf("cluster is OKD but job name %q does not contain 'okd-scos'", originalJobName)
+}
+if !isOKD &amp;&amp; strings.Contains(originalJobName, "okd-scos") {
+    e2e.Failf("cluster is not OKD but job name %q contains 'okd-scos'", originalJobName)
+}</pre>
+</div>
+
+<h2>Things I checked and was fine with</h2>
+<ul>
+  <li><code>originalJobName</code> (pre <code>e2e-</code> split) vs <code>jobName</code> (post-split) usage: using <code>originalJobName</code> for the <code>okd-scos</code> match is correct since <code>okd-scos</code> appears in the job-name prefix, before the <code>e2e-</code> marker.</li>
+  <li><code>switch</code> precedence in <code>validateStandaloneNodeOS</code>: the <code>isOKD</code> case correctly takes precedence over the <code>rhcos10</code>/<code>rhcos9</code>/<code>-runc</code> substring checks, avoiding misclassification of an OKD job name that also happens to contain e.g. <code>rhcos10</code>.</li>
+  <li>No unit tests expected/needed &mdash; this is itself a live-cluster e2e assertion, consistent with the rest of the file.</li>
+  <li>No changes to shared library code or other call sites; blast radius limited to this one Ginkgo <code>It</code>.</li>
+</ul>
+
+<h2>Open questions for the author</h2>
+<ul>
+  <li>Does MicroShift reliably serve the <code>config.openshift.io/v1 ClusterVersion</code> "version" singleton? If not, the reordered fetch will break MicroShift runs of "should match os version" &mdash; can you confirm, or move the fetch back inside the standalone branch?</li>
+  <li>Has OKD ever used a stream other than <code>centos-10</code> (e.g. during an internal 9&rarr;10-style transition)? If not, might be worth a one-line comment explaining why the version-based fallback is skipped for OKD.</li>
+</ul>
+
+</body>
+</html>
