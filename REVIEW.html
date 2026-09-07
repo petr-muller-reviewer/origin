@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Review of openshift/origin#31600</title>
+  <style>
+    body { font-family: system-ui, sans-serif; line-height: 1.55; color: #202124; max-width: 980px; margin: 2rem auto; padding: 0 1.25rem; }
+    header { border-bottom: 1px solid #dfe1e5; margin-bottom: 1.5rem; }
+    h1, h2 { line-height: 1.25; }
+    code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; background: #f4f5f6; padding: .1rem .3rem; border-radius: 3px; }
+    .meta { display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem; margin: 1rem 0; }
+    .verdict { border-left: 4px solid #188038; background: #eef7ee; padding: .8rem 1rem; }
+    li { margin: .35rem 0; }
+    a { color: #0969da; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Review of <a href="https://github.com/openshift/origin/pull/31600">openshift/origin#31600</a></h1>
+    <p>OCPBUGS-115163: make upgrade acknowledgement aware of CVO payload retrieval</p>
+    <div class="meta">
+      <strong>Head</strong><code>2d87a1ff82a0b993691719376bd00799497624a9</code>
+      <strong>Base</strong><code>main</code>
+      <strong>Reviewed</strong><code>2026-09-03T10:46:13Z</code>
+      <strong>Verdict</strong><code>approve</code>
+    </div>
+  </header>
+
+  <section>
+    <h2>Verdict</h2>
+    <p class="verdict"><strong>Approve.</strong> The changed acknowledgement step remains gated on <code>status.observedGeneration</code>, fails the dedicated acknowledgement JUnit case immediately for a target-matched <code>ReleaseAccepted=False</code>, and fails that same case after a bounded wait when retrieval never completes.</p>
+  </section>
+
+  <section>
+    <h2>What this PR does</h2>
+    <ul>
+      <li>Recognizes the CVO's target-specific <code>ReleaseAccepted</code> condition while waiting for acknowledgement.</li>
+      <li>Extends the short platform timeout only while retrieval of the requested payload is visibly in progress.</li>
+      <li>Fails fast and surfaces the CVO reason/message when retrieval or verification is rejected.</li>
+      <li>Caps a stuck retrieval at 15 minutes while retaining the existing <code>observedGeneration</code> success criterion.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Findings</h2>
+    <p>No findings.</p>
+  </section>
+
+  <section>
+    <h2>Things I checked and was fine with</h2>
+    <ul>
+      <li><code>test/e2e/upgrade/upgrade.go:487-597</code>: <code>RecordJUnit</code> records errors under <code>[sig-cluster-lifecycle] Cluster version operator acknowledges upgrade</code>; the enclosing upgrade then also records <code>Cluster completes upgrade</code> as failed and returns.</li>
+      <li><code>test/extended/util/disruption/disruption.go:230-247,366-391</code>: additional results with a failure string become independent failing JUnit test cases in the disruption suite.</li>
+      <li>CVO <code>pkg/cvo/status.go:setReleaseAcceptedCondition</code>: retrieval is <code>Unknown</code>, retrieval/verification failure is <code>False</code>, and successful payload loading is <code>True</code>.</li>
+      <li>CVO scenario fixtures use the exact <code>version=%q image=%q</code> message form matched by <code>releaseAcceptedForTarget</code> for both in-progress and failed retrieval.</li>
+      <li>A retrieval that stays <code>Unknown</code> cannot pass: it reaches <code>maxCVOUpdateAckTimeout</code>; a missing or stale other-target condition fails at the shorter platform timeout.</li>
+      <li>All upgrade-suite variants (<code>all</code>, <code>platform</code>, and <code>none</code>) select the same disruptive cluster-upgrade Ginkgo test; their only difference is the set of parallel upgrade checks.</li>
+      <li><code>go test ./test/e2e/upgrade/</code> passed.</li>
+      <li><code>go vet ./test/e2e/upgrade/</code> passed.</li>
+      <li><code>git diff --check upstream/main...HEAD</code> passed.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Open questions for the author</h2>
+    <p>Non-blocking: would it be worth extracting the acknowledgement-state decision into a small helper so tests can assert the <code>ReleaseAccepted=False</code> and stuck-<code>Unknown</code> outcomes directly? The current unit test covers target matching, while the JUnit failure routing is established by inspection of the existing disruption harness.</p>
+  </section>
+</body>
+</html>
