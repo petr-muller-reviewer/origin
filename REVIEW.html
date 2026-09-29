@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>openshift/origin#31635</title><style>
+:root { --bg:#fff; --fg:#1f2328; --muted:#59636e; --border:#d1d9e0; --code-bg:#f6f8fa;
+  --link:#0969da; --red:#cf222e; --amber:#9a6700; --green:#1a7f37; --blue:#0969da; --gray:#59636e; }
+@media (prefers-color-scheme: dark) { :root { --bg:#0d1117; --fg:#e6edf3; --muted:#9198a1;
+  --border:#3d444d; --code-bg:#151b23; --link:#4493f8; --red:#f85149; --amber:#d29922;
+  --green:#3fb950; --blue:#4493f8; --gray:#9198a1; } }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--fg);
+  font:16px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif; }
+main { max-width:52rem; margin:0 auto; padding:2rem 1rem 4rem; }
+h1 { font-size:1.6rem; margin:0 0 .25rem; line-height:1.3; }
+h2 { font-size:1.25rem; margin:2.25rem 0 .75rem; padding-bottom:.3rem; border-bottom:1px solid var(--border); }
+h3 { font-size:1.05rem; margin:1.5rem 0 .5rem; }
+h4 { font-size:1rem; margin:1.25rem 0 .5rem; }
+a { color:var(--link); }
+code, pre { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.875em; }
+code { background:var(--code-bg); padding:.1em .35em; border-radius:4px; }
+pre { background:var(--code-bg); padding:.75rem 1rem; border-radius:6px; overflow-x:auto; line-height:1.45; }
+pre code { background:none; padding:0; }
+blockquote { margin:0; padding:0 1rem; color:var(--muted); border-left:3px solid var(--border); }
+ul, ol { padding-left:1.5rem; }
+.meta { color:var(--muted); font-size:.9rem; margin:.25rem 0 1rem; }
+.meta code { font-size:.85em; }
+.badges { display:flex; flex-wrap:wrap; gap:.5rem; margin:.75rem 0; }
+.badge, .tag { display:inline-block; border:1px solid currentColor; border-radius:999px;
+  padding:.05rem .6rem; font-size:.8rem; font-weight:600; white-space:nowrap; }
+.tag { margin-right:.4rem; vertical-align:.1em; }
+.c-red { color:var(--red); } .c-amber { color:var(--amber); } .c-green { color:var(--green); }
+.c-blue { color:var(--blue); } .c-gray { color:var(--gray); }
+details { margin:1rem 0; } summary { cursor:pointer; color:var(--muted); font-size:.9rem; }
+</style></head><body><main>
+<h1>OCPBUGS-122386: e2e-analysis: add --skip-readiness-checks flag for degraded cluster lanes</h1>
+<div class="meta"><a href="https://github.com/openshift/origin/pull/31635">openshift/origin#31635</a> · base <code>main</code> · head_sha <code>cfa47d210d4e</code> · reviewed_at <code>2026-09-29T12:07:00Z</code></div>
+<div class="badges"><span class="badge c-red">verdict: request-changes</span></div>
+<h2>Verdict</h2>
+<p>Request changes: bound the ClusterOperator lookup in skip mode.</p>
+<p>The flag and environment variable produce skipped JUnit cases with the expected names, and the degraded workflow passes the variable to <code>gather-extra</code>. The new skip path still waits on a cluster API request with no deadline before it writes the report. An unresponsive API can therefore prevent the skipped results that this PR is meant to provide.</p>
+<h2>What this PR does</h2>
+<ul>
+<li>Adds <code>--skip-readiness-checks</code> and recognizes <code>SKIP_READINESS_CHECKS=true</code>.
+</li>
+<li>Emits skipped JUnit cases for readiness checks and core plus discovered ClusterOperators.
+</li>
+<li>Keeps install duration reporting in the deferred JUnit report generation.
+</li>
+<li>Adds command and package tests for skipped case names and counts.
+</li></ul>
+<h2>Findings</h2>
+<h3><span class="tag c-amber">should-fix</span>Bound the API lookup before emitting skipped results</h3>
+<ul>
+<li>where: <code>pkg/e2eanalysis/e2e_analysis.go:70-83</code>
+</li>
+<li>concern: The PR promises skipped JUnit output for intentionally degraded clusters. <code>Run</code> calls this lookup before adding any skipped cases. <code>e2e.LoadConfig()</code> supplies no timeout override, so the resulting <code>rest.Config.Timeout</code> is zero; <code>dynamic.NewForConfig</code> preserves it. With <code>context.Background()</code>, client-go gives this <code>List</code> no overall deadline. If the API accepts a connection but stops responding, the fallback at lines 183-190 is never reached and <code>gather-extra</code> can stall without the promised report. Use a bounded context and fall back to the core operator names when the lookup times out.
+</li>
+<li>excerpt:<pre><code>return dc.Resource(schema.GroupVersionResource{
+    Group:    &quot;config.openshift.io&quot;,
+    Resource: &quot;clusteroperators&quot;,
+    Version:  &quot;v1&quot;,
+}).List(context.Background(), metav1.ListOptions{})</code></pre>
+</li></ul>
+<h3><span class="tag c-gray">nit</span>State the actual reason for skipping</h3>
+<ul>
+<li>where: <code>pkg/e2eanalysis/e2e_analysis.go:171-173</code>
+</li>
+<li>concern: Spec: the PR calls for a clear skip message. When only <code>--skip-readiness-checks</code> is set, the JUnit message says <code>SKIP_READINESS_CHECKS is set</code>, which is false. A source-neutral message would describe both supported paths accurately.
+</li>
+<li>excerpt:<pre><code>if opt.SkipReadinessChecks || os.Getenv(&quot;SKIP_READINESS_CHECKS&quot;) == &quot;true&quot; {
+    skipMsg := &quot;Skipped: cluster is running in degraded mode (SKIP_READINESS_CHECKS is set)&quot;</code></pre>
+</li></ul>
+<h3><span class="tag c-gray">nit</span>Share the ClusterOperator lookup logic</h3>
+<ul>
+<li>where: <code>pkg/e2eanalysis/e2e_analysis.go:70-83</code>
+</li>
+<li>concern: Standards: possible Duplicated Code (a judgment call). The new helper repeats configuration loading, dynamic client creation, and a ClusterOperator list call already in the normal <code>Run</code> path at lines 209-220 and 258-263. Sharing that logic would keep the two paths aligned while retaining a test seam.
+</li>
+<li>excerpt:<pre><code>cfg, err := e2e.LoadConfig()
+if err != nil {
+    return nil, err
+}
+dc, err := dynamic.NewForConfig(cfg)
+if err != nil {
+    return nil, err
+}</code></pre>
+</li></ul>
+<h2>Resolved</h2>
+<p>None.</p>
+<h2>Checked</h2>
+<ul>
+<li>The degraded workflow sets <code>SKIP_READINESS_CHECKS: &quot;true&quot;</code>, and <code>gather-extra</code> declares that environment variable in <code>openshift/release</code>.
+</li>
+<li>The skipped case names match the normal readiness and operator check identities, including runtime operators when listing succeeds.
+</li>
+<li><code>GenerateReport</code> remains deferred, and it still records install durations when a JUnit directory is provided.
+</li>
+<li><code>go test ./pkg/e2eanalysis ./pkg/cmd/openshift-tests/e2e-analysis</code> passed.
+</li>
+<li>Verified the timeout path in vendored client-go: <code>LoadConfig()</code> passes no timeout override, <code>dynamic.NewForConfig()</code> preserves <code>rest.Config.Timeout</code>, and a zero value means no overall request timeout.
+</li>
+<li>No documented repository coding standard violation was found in the changed hunks.
+</li></ul>
+<h2>Open questions</h2>
+<ul>
+<li>What maximum wait for the ClusterOperator list is acceptable in <code>gather-extra</code> before using the core operator fallback?
+</li></ul>
+</main></body></html>
